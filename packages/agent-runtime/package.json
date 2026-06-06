@@ -1,0 +1,20 @@
+{
+  "name": "@ria/agent-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src",
+    "test": "echo 'No tests yet' && exit 0"
+  },
+  "devDependencies": {
+    "@ria/eslint-config": "workspace:*",
+    "@ria/tsconfig": "workspace:*",
+    "eslint": "^9.25.0",
+    "typescript": "^5.8.3"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "@ria/eslint-config",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.mjs"
+  },
+  "dependencies": {
+    "@typescript-eslint/eslint-plugin": "^8.30.0",
+    "@typescript-eslint/parser": "^8.30.0"
+  },
+  "peerDependencies": {
+    "eslint": "^9.0.0"
+  }
+}
