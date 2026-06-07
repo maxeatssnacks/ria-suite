@@ -47,7 +47,7 @@ export async function GET(request: NextRequest) {
   }
 
   if (userId) {
-    void writeAuditEvent({
+    writeAuditEvent({
       tenantId,
       actorId: userId,
       actorRole: role as Parameters<typeof writeAuditEvent>[0]['actorRole'],
@@ -57,6 +57,8 @@ export async function GET(request: NextRequest) {
       ipAddress:
         request.headers.get('x-forwarded-for') ?? request.headers.get('x-real-ip') ?? undefined,
       userAgent: request.headers.get('user-agent') ?? undefined,
+    }).catch((err) => {
+      console.error('[auth] audit write failed for user.logout', err)
     })
   }
 

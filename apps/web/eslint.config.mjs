@@ -12,6 +12,18 @@ const compat = new FlatCompat({
 const eslintConfig = [
   { ignores: ['.next/**', 'node_modules/**', 'next-env.d.ts'] },
   ...compat.extends('next/core-web-vitals', 'next/typescript'),
+  {
+    // Honor the repo-wide `_`-prefix convention for intentionally-unused bindings.
+    // `next/typescript` enables no-unused-vars without an ignore pattern, which
+    // flags required-but-unused positional params (e.g. useActionState's
+    // (prevState, formData) signature).
+    rules: {
+      '@typescript-eslint/no-unused-vars': [
+        'warn',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+      ],
+    },
+  },
 ]
 
 export default eslintConfig

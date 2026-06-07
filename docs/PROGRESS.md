@@ -227,3 +227,66 @@ _(same as above — none added)_
 2. **`RESEND_FROM_ADDRESS`** must be a verified domain in Resend. The placeholder `noreply@ria.example.com` will not deliver in production.
 3. **Session revalidation**: The tenant list is cached in the session at login time. If a user's memberships change (invitation accepted in another browser, role change), their session won't reflect it until next login. Part D or E should add a "refresh session" mechanism.
 4. **MFA enrollment prompt**: Deferred within Part C — WorkOS can surface this via AuthKit settings. No app-side changes needed for enforcement; the prompt comes from WorkOS's hosted auth page.
+
+---
+
+## Part C — Follow-up: Prisma Monorepo Resolution & Loud Accept Failures
+
+**Status:** Complete  
+**Date:** 2026-06-07
+
+### Symptom (from dev-server logs)
+
+Invitation accept silently failed: `POST /invite/[token]` returned `200` with no membership
+created and no redirect. Every request logged `Package @prisma/client can't be external … could
+not be resolved by Node.js from the project directory` (twice — once for `.prisma/client`, once
+for `packages/db/src`). After the second Accept click the dev server hard-crashed with
+`[ELIFECYCLE] Command failed`.
+
+### Root cause
+
+`@prisma/client` is in Next.js's default `serverExternalPackages` list and **must** stay external —
+it loads a native query-engine binary that cannot be bundled. Because it's external, Next emits a
+runtime `require('@prisma/client')` that Node resolves from the **app** directory (`apps/web`), not
+from `@ria/db` where it is imported. Under pnpm's isolated `node_modules`, `@prisma/client` was a
+dependency of `packages/db` only, so it was absent from `apps/web/node_modules` and the require
+failed at request time. `transpilePackages` transpiles our workspace TS but does **not** make an
+externalized third-party package resolvable from the app.
+
+Two failures stacked on top:
+
+- The inline server action ignored `acceptInvitation`'s return value, so a thrown Prisma error (or
+  a validation `{ error }`) produced a bare `200` with no user-visible signal.
+- The `invitation.accepted` audit write was fire-and-forget (`void writeAuditEvent(...)`) with no
+  `.catch`. When it rejected on the Prisma resolution failure, the **unhandled promise rejection**
+  took down the dev process — the `[ELIFECYCLE]` crash.
+
+### Fix
+
+| Change                                                                                                                               | File                                                                              | Why                                                                                                                                                                                                         |
+| ------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Added `@prisma/client` (dep) + `prisma` (devDep) to `apps/web`                                                                       | `apps/web/package.json`                                                           | The standard pnpm + Next fix: makes the externalized `@prisma/client` resolvable from the app dir. `@prisma/client` stays external (native binary); we did **not** remove it from `serverExternalPackages`. |
+| Documented the _why_ of the otherwise-unused dep                                                                                     | `apps/web/next.config.ts`                                                         | Prevents a future "unused dependency" cleanup from reintroducing the bug.                                                                                                                                   |
+| Accept action catches + logs all errors, returns `{ error }`; `redirect()` moved outside the try/catch so `NEXT_REDIRECT` propagates | `apps/web/src/app/invite/[token]/actions.ts`                                      | Failures are now loud server-side and surfaced to the user.                                                                                                                                                 |
+| Action converted to a `useActionState`-compatible signature; new client component renders the error state                            | `apps/web/src/app/invite/[token]/{actions.ts,accept-form.tsx,page.tsx}`           | The invite page shows an inline error instead of silently re-rendering on `200`.                                                                                                                            |
+| Every fire-and-forget `writeAuditEvent` now has `.catch((err) => console.error(...))`                                                | invite action, `auth/logout`, `auth/callback`, `api/invitations`, `switch-tenant` | An audit write rejection can never produce an unhandled rejection / crash the process.                                                                                                                      |
+| `argsIgnorePattern: '^_'` added to the web ESLint config                                                                             | `apps/web/eslint.config.mjs`                                                      | `next/typescript` enabled `no-unused-vars` without the repo's `_`-prefix convention, flagging the required-but-unused `useActionState` params. Now aligned with `tooling/eslint`.                           |
+
+**Decision (recorded here, not a standalone ADR):** keep `@prisma/client` external and install it in
+`apps/web` rather than forcing it to bundle. Bundling Prisma's query engine is unsupported and
+fragile; installing the package in the consuming app is Prisma's and Next's documented monorepo
+guidance. This is a build-tooling fix, not an architectural choice, so it lives in PROGRESS rather
+than `docs/adr`.
+
+### Verification
+
+- Dev server restarted: **0** `can't be external` warnings (previously on every request), **0**
+  `ELIFECYCLE` crashes.
+- `GET /invite/<bogus-token>` → `404` — proves the service-role Prisma `findUnique` now executes
+  against the real DB at runtime (returns nothing → `notFound()`), the exact path that was failing.
+- `POST /api/invitations` (no session) → `401` — route compiles and runs.
+- `pnpm --filter @ria/web typecheck` clean; `lint` clean; `build` succeeds (12 routes;
+  `/invite/[token]` now ships a client bundle for the error-rendering form).
+- Full browser accept→membership flow still requires an interactive WorkOS login + a live
+  invitation; not exercisable headlessly. The Prisma resolution and loud-failure paths are verified
+  as above.

@@ -118,7 +118,7 @@ export async function GET(request: NextRequest) {
     }
     await session.save()
 
-    void writeAuditEvent({
+    writeAuditEvent({
       tenantId: activeTenant?.id,
       actorId: dbUser.id,
       actorRole: activeTenant?.role as Parameters<typeof writeAuditEvent>[0]['actorRole'],
@@ -128,6 +128,8 @@ export async function GET(request: NextRequest) {
       ipAddress:
         request.headers.get('x-forwarded-for') ?? request.headers.get('x-real-ip') ?? undefined,
       userAgent: request.headers.get('user-agent') ?? undefined,
+    }).catch((err) => {
+      console.error('[auth] audit write failed for user.login', err)
     })
 
     return response

@@ -90,7 +90,7 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  void writeAuditEvent({
+  writeAuditEvent({
     tenantId: session.tenantId,
     actorId: session.userId,
     actorRole: session.role as Parameters<typeof writeAuditEvent>[0]['actorRole'],
@@ -101,6 +101,8 @@ export async function POST(request: NextRequest) {
     ipAddress:
       request.headers.get('x-forwarded-for') ?? request.headers.get('x-real-ip') ?? undefined,
     userAgent: request.headers.get('user-agent') ?? undefined,
+  }).catch((err) => {
+    console.error('[invitations] audit write failed for invitation.sent', err)
   })
 
   return NextResponse.json({ id: invitation.id }, { status: 201 })

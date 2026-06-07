@@ -7,7 +7,15 @@ import { writeAuditEvent } from '@ria/audit'
 import { getSession } from '@/lib/session'
 import type { TenantSummary } from '@ria/core'
 
-export async function acceptInvitation(token: string) {
+// State returned to the invite page when the accept flow does NOT redirect.
+// A successful accept ends in redirect('/dashboard') and never returns a value.
+export type AcceptInvitationState = { error?: string }
+
+export async function acceptInvitation(
+  token: string,
+  _prevState: AcceptInvitationState,
+  _formData: FormData
+): Promise<AcceptInvitationState> {
   const session = await getSession()
   if (!session.userId) {
     redirect(`/auth/login?redirect=/invite/${token}`)
@@ -74,17 +82,31 @@ export async function acceptInvitation(token: string) {
     session.role = newTenant.role
     await session.save()
 
-    void writeAuditEvent({
+    // Fire-and-forget, but it MUST catch its own rejection — an unhandled
+    // rejection here can crash the dev server process.
+    writeAuditEvent({
       tenantId: invitation.tenantId,
       actorId: session.userId,
       action: 'invitation.accepted',
       resource: 'invitation',
       resourceId: invitation.id,
       metadata: { role: invitation.role, email: invitation.email },
+    }).catch((err) => {
+      console.error('[invite] audit write failed for invitation.accepted', err)
     })
+  } catch (err) {
+    // Any thrown error (DB unreachable, Prisma resolution, etc.) is logged
+    // server-side and surfaced to the user instead of a silent 200.
+    console.error('[invite] acceptInvitation failed', err)
+    return {
+      error:
+        'Something went wrong accepting this invitation. Please try again, or contact your administrator if it keeps happening.',
+    }
   } finally {
-    await srClient.$disconnect()
+    await srClient.$disconnect().catch(() => {})
   }
 
+  // Outside the try/catch: redirect() throws a NEXT_REDIRECT control-flow signal
+  // that must propagate, not be swallowed by the catch above.
   redirect('/dashboard')
 }

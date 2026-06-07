@@ -24,7 +24,7 @@ export async function switchTenant(formData: FormData) {
   session.role = target.role
   await session.save()
 
-  void writeAuditEvent({
+  writeAuditEvent({
     tenantId: target.id,
     actorId: session.userId,
     actorRole: target.role as Parameters<typeof writeAuditEvent>[0]['actorRole'],
@@ -32,6 +32,8 @@ export async function switchTenant(formData: FormData) {
     resource: 'tenant',
     resourceId: target.id,
     metadata: { from: previousTenantId ?? null, to: target.id },
+  }).catch((err) => {
+    console.error('[switch-tenant] audit write failed for tenant.switched', err)
   })
 
   redirect('/dashboard')

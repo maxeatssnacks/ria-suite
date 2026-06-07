@@ -2,7 +2,7 @@ import crypto from 'node:crypto'
 import { notFound } from 'next/navigation'
 import { createServiceRoleClient } from '@ria/db'
 import { getSessionUser } from '@/lib/session'
-import { acceptInvitation } from './actions'
+import { AcceptForm } from './accept-form'
 
 interface Props {
   params: Promise<{ token: string }>
@@ -41,19 +41,7 @@ export default async function InvitePage({ params }: Props) {
         <p className="text-muted-foreground mb-8 text-sm">Sent to {invitation.email}</p>
 
         {session ? (
-          <form
-            action={async () => {
-              'use server'
-              await acceptInvitation(token)
-            }}
-          >
-            <button
-              type="submit"
-              className="bg-primary text-primary-foreground hover:bg-primary/90 w-full rounded-md px-4 py-2 text-sm font-medium"
-            >
-              Accept invitation
-            </button>
-          </form>
+          <AcceptForm token={token} />
         ) : (
           <a
             href={`/auth/login?redirect=/invite/${token}`}
