@@ -68,20 +68,26 @@ export async function POST(request: NextRequest) {
 
   // Send invitation email.
   const acceptUrl = `${getAppUrl()}/invite/${token}`
-  try {
-    await getResend().emails.send({
-      from: getFromAddress(),
-      to: email,
-      subject: `You've been invited to ${invitation.tenant.name} on RIA`,
-      html: `
+  if (!process.env.RESEND_API_KEY) {
+    // Dev fallback: log the accept URL so the flow is testable without Resend.
+    // Resend is wired for real in Part F.
+    console.log(`[invitations] DEV — no RESEND_API_KEY set. Accept URL:\n  ${acceptUrl}`)
+  } else {
+    try {
+      await getResend().emails.send({
+        from: getFromAddress(),
+        to: email,
+        subject: `You've been invited to ${invitation.tenant.name} on RIA`,
+        html: `
         <p>You've been invited to join <strong>${invitation.tenant.name}</strong> as <strong>${role.replace(/_/g, ' ')}</strong>.</p>
         <p><a href="${acceptUrl}">Accept your invitation</a> — link expires in 7 days.</p>
         <p style="color:#666;font-size:12px">If you weren't expecting this, you can ignore this email.</p>
       `,
-    })
-  } catch (err) {
-    console.error('[invitations] Email error:', err)
-    // Don't fail the request — the invitation row exists; admin can resend.
+      })
+    } catch (err) {
+      console.error('[invitations] Email error:', err)
+      // Don't fail the request — the invitation row exists; admin can resend.
+    }
   }
 
   void writeAuditEvent({

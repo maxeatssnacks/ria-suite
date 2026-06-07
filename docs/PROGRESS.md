@@ -159,7 +159,7 @@ _(same as above — none added)_
 
 ## Part C — Authentication (WorkOS)
 
-**Status:** Complete  
+**Status:** Code complete — human verification pending  
 **Date:** 2026-06-07
 
 ### What was completed
@@ -206,6 +206,19 @@ _(same as above — none added)_
 - **`@workos-inc/node` only** (not `authkit-nextjs`): Per ADR-0002, WorkOS provides identity only. Using the lower-level SDK gives full control over the session. `authkit-nextjs` would add a second session cookie and interfere with our own iron-session.
 - **Tenant list in session cookie**: The spec says "server-side session with our user_id, active tenant_id, role." We also cache the full tenant list in the session to enable the tenant switcher without a cross-tenant DB query on every page load. The cookie remains HttpOnly/encrypted/server-only — no client exposure.
 - **Resend integrated in Part C**: The spec listed Resend under Part F (background jobs), but the invitation email is a core Part C requirement. Integrated now; Part F will add background job wrapping (retry, queue) if needed.
+- **Dev fallback for invitation email**: When `RESEND_API_KEY` is not set, the invitation route skips the Resend call and logs the full accept URL to the server console (prefixed `[invitations] DEV`). This allows the full invite→accept flow to be tested locally without a Resend account. Resend wired for real in Part F.
+
+### Verification checklist (human)
+
+- [ ] Sign up / first login via WorkOS AuthKit → JIT user row created in `users`
+- [ ] Single-tenant user → lands on `/dashboard` with correct tenant name and role
+- [ ] Multi-tenant user → lands on `/switch-tenant`; switching tenant updates session; `/dashboard` reflects new tenant
+- [ ] Authenticated user with no memberships → `/no-access`
+- [ ] `tenant_admin` sends invitation via `POST /api/invitations` → accept URL logged to console (dev) or email delivered (prod)
+- [ ] Invitee opens accept link → membership created, session updated, redirected to `/dashboard`
+- [ ] Tenant A session cannot access Tenant B resources (middleware + RLS)
+- [ ] Session expiry / logout → session cookie cleared, redirect to `/auth/login`
+- [ ] Audit events present in `audit_events` table for: `user.login`, `user.logout`, `invitation.sent`, `invitation.accepted`, `tenant.switched`
 
 ### Open questions for Part D
 

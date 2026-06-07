@@ -89,3 +89,4 @@ Permission checks go through a single `can(user, action, resource)` helper in `p
 5. **End every working session by writing/updating `docs/PROGRESS.md`**: which Part, what was completed, what deviated from spec (and why), open questions for planning. The human carries this back to the planning process.
 6. **Keep `.env.example` and README current** as you add services and env vars.
 7. **Out-of-scope discipline:** each spec Part lists out-of-scope items. Do not build them, even if convenient.
+8. **At the start of every session, read `docs/PROGRESS.md`** to orient on current state before doing anything else. This applies after context compaction as well.
