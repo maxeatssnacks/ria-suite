@@ -14,7 +14,12 @@
   "devDependencies": {
     "@ria/eslint-config": "workspace:*",
     "@ria/tsconfig": "workspace:*",
+    "@types/node": "^22.19.19",
     "eslint": "^9.25.0",
     "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "@ria/core": "workspace:*",
+    "@ria/db": "workspace:*"
   }
 }

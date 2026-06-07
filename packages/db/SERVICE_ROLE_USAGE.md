@@ -42,6 +42,37 @@ Each entry must include:
 - **Audit**: N/A — read-only CI script; no mutation.
 - **Added**: 2026-06-07
 
+### 4 — `packages/audit/src/index.ts` — `writeAuditEvent()`
+
+- **Path**: `packages/audit/src/index.ts` → `writeAuditEvent()`
+- **Reason**: Auth-layer events (login, logout, invitation accepted, tenant switch) occur
+  outside `forTenant()` transactions where `app_user` context is not yet established.
+  The service role is the only way to insert these events without establishing a
+  spurious tenant context. The interim implementation (Part C) creates a short-lived
+  service-role client per write; Part E will replace this with a persistent singleton.
+- **Audit**: N/A — this function IS the audit writer; it does not write a secondary event.
+- **Added**: 2026-06-07
+
+### 5 — `apps/web/src/app/auth/callback/route.ts` — tenant list fetch
+
+- **Path**: `apps/web/src/app/auth/callback/route.ts`
+- **Reason**: After WorkOS identifies the user, we need to load all of their active tenant
+  memberships to populate the session. The `tenant_memberships` RLS requires a set
+  `app.tenant_id`, so we cannot use `forTenant()` for a cross-tenant list query. Service
+  role is used for this one-time-per-login lookup only.
+- **Audit**: YES — `writeAuditEvent({ action: 'user.login', ... })` is called in the same handler.
+- **Added**: 2026-06-07
+
+### 6 — `apps/web/src/app/invite/[token]/actions.ts` — invitation pre-auth lookup
+
+- **Path**: `apps/web/src/app/invite/[token]/actions.ts` → `acceptInvitation()`
+- **Reason**: Looking up an invitation by token hash requires reading from `invitations`,
+  which has RLS requiring tenant context. The accepting user does not yet belong to the
+  target tenant, so we cannot establish that context. Service role is used only for the
+  lookup and the membership creation; the invitation is marked accepted in the same call.
+- **Audit**: YES — `writeAuditEvent({ action: 'invitation.accepted', ... })` is called.
+- **Added**: 2026-06-07
+
 ## Guidelines
 
 - Service-role clients MUST only be instantiated in server-side code

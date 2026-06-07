@@ -1,8 +1,9 @@
 import { PrismaClient } from '@prisma/client'
 
-// ─── Prisma singleton ──────────────────────────────────────────────────────────
-// In tests, EmbeddedPostgres sets DATABASE_URL before this module loads.
-// In production, DATABASE_URL is the pooled connection; DIRECT_URL is direct.
+// ─── Lazy Prisma singleton ─────────────────────────────────────────────────────
+// The client is not instantiated until the first method call. This allows Next.js
+// to import the module during build (static analysis) without DATABASE_URL set.
+// In production (Vercel), env vars are injected before any request is served.
 
 function createPrismaClient() {
   return new PrismaClient({
@@ -10,9 +11,23 @@ function createPrismaClient() {
   })
 }
 
-const globalForPrisma = global as unknown as { prisma?: ReturnType<typeof createPrismaClient> }
-export const prisma = globalForPrisma.prisma ?? createPrismaClient()
-if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma
+const globalForPrisma = global as unknown as { _prisma?: PrismaClient }
+
+function getPrismaClient(): PrismaClient {
+  if (!globalForPrisma._prisma) {
+    globalForPrisma._prisma = createPrismaClient()
+  }
+  return globalForPrisma._prisma
+}
+
+// Proxy defers instantiation to the first property access.
+export const prisma = new Proxy({} as PrismaClient, {
+  get(_target, prop: string | symbol) {
+    const client = getPrismaClient()
+    const value = Reflect.get(client, prop)
+    return typeof value === 'function' ? (value as Function).bind(client) : value
+  },
+})
 
 // ─── Service-role client ───────────────────────────────────────────────────────
 // Connects via DIRECT_URL (bypasses pgBouncer) and runs as the superuser.

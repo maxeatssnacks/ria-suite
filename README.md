@@ -74,7 +74,7 @@ tooling/
 Tests spin up an embedded PostgreSQL 18.4 instance automatically — no Docker or external DB needed.
 
 ```bash
-pnpm test                # starts embedded PG, runs migration SQL, runs 26 tests, stops PG
+pnpm test                # starts embedded PG, runs migration SQL, runs 31 tests, stops PG
 ```
 
 ### Hosted deployment (Supabase or any PostgreSQL)
@@ -101,13 +101,12 @@ pnpm --filter @ria/db db:check-rls
 
 > **Re-running migrations**: `prisma migrate deploy` is idempotent — already-applied migrations are skipped. Safe to run on every deploy.
 
-> **`app_user` login**: the migration creates `app_user` with `NOLOGIN`. For hosted Postgres, grant login once as a superuser:
->
-> ```sql
-> ALTER ROLE app_user LOGIN PASSWORD '<strong-password>';
-> ```
->
-> Then update `DATABASE_URL` to connect as `app_user` instead of `postgres` for runtime queries. During Part B the seed still uses the `postgres` superuser via `DIRECT_URL`.
+> **`app_user` runtime pattern**: The app does **not** connect as `app_user` directly. Instead,
+> `DATABASE_URL` points to the pooler using the superuser/pooler role (e.g. Supabase's `postgres`).
+> The `forTenant()` helper in `packages/db` issues `SET LOCAL ROLE app_user` inside every
+> transaction, switching to the restricted role for the duration of that transaction only.
+> Migration `20260607000001` grants `app_user` membership to the connecting role automatically
+> on hosted Postgres (where `postgres` is not a superuser). `app_user` remains `NOLOGIN`.
 
 ### Regenerate Prisma client after schema changes
 

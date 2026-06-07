@@ -154,3 +154,62 @@ None — this was a follow-up hardening session, not a spec part.
 ### Open questions for Part C
 
 _(same as above — none added)_
+
+---
+
+## Part C — Authentication (WorkOS)
+
+**Status:** Complete  
+**Date:** 2026-06-07
+
+### What was completed
+
+| Task                                      | Status | Notes                                                                                                                                                                                          |
+| ----------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| WorkOS AuthKit integration                | ✅     | `@workos-inc/node` only (no `authkit-nextjs`); full control per ADR-0002. Hosted auth pages via WorkOS.                                                                                        |
+| Iron-session HttpOnly cookie              | ✅     | `iron-session` v8. Session stores `{ userId, workosUserId, email, name, tenantId?, role?, tenants[] }`. HttpOnly, SameSite=Lax, 7-day TTL, Secure in production.                               |
+| JIT user provisioning                     | ✅     | `/auth/callback` upserts `users` row on every login (keyed by `workos_user_id`). No tenant access until membership exists.                                                                     |
+| Tenant list cached in session             | ✅     | Login fetches all active memberships via service role once; stored in session to avoid per-request cross-tenant queries.                                                                       |
+| Middleware auth gating                    | ✅     | `src/middleware.ts` — decrypts session, redirects to `/auth/login` if no userId, to `/switch-tenant` or `/no-access` if no tenantId.                                                           |
+| Dashboard                                 | ✅     | `/(app)/dashboard` — shows current tenant name, role, user name.                                                                                                                               |
+| No-access screen                          | ✅     | `/(app)/no-access` — shown when authenticated but no active tenant membership.                                                                                                                 |
+| Tenant switcher                           | ✅     | `/(app)/switch-tenant` — lists all user tenants (from session), server action updates session + audit-logs.                                                                                    |
+| Logout                                    | ✅     | `GET /auth/logout` — destroys session cookie, audit-logs, redirects to login.                                                                                                                  |
+| Invitation: send                          | ✅     | `POST /api/invitations` — `can()` gate (tenant_admin), token = 32-byte random hex, SHA-256 hash stored; Resend email with 7-day link.                                                          |
+| Invitation: accept                        | ✅     | `GET/POST /invite/[token]` — hash lookup (service role), membership creation, session update, audit-log. Email match enforced. Invalid/expired/used tokens → `notFound()` (no existence leak). |
+| `packages/core` — types, schemas, `can()` | ✅     | `TenantRole`, `SessionData`, `InvitationCreate`, `SwitchTenant` Zod schemas. `can(user, action)` with role-rank hierarchy.                                                                     |
+| `packages/audit` — interim write path     | ✅     | `writeAuditEvent()` via service-role Prisma. **Interim until Part E** (see below).                                                                                                             |
+| ADR-0004 — SAML/SCIM deferred             | ✅     | `docs/adr/0004-saml-scim-deferred.md` — documents deferral and the exact upgrade path when needed.                                                                                             |
+| SERVICE_ROLE_USAGE.md — entries #4-#6     | ✅     | Audit writer, login tenant list fetch, invitation pre-auth lookup all catalogued.                                                                                                              |
+| README — `app_user` section corrected     | ✅     | Removed misleading "grant LOGIN, connect as app_user" paragraph; replaced with the real `SET LOCAL ROLE` runtime pattern.                                                                      |
+| `.env.example` updated                    | ✅     | Added `SESSION_SECRET`, `WORKOS_REDIRECT_URI`, `NEXT_PUBLIC_APP_URL`, `RESEND_FROM_ADDRESS`.                                                                                                   |
+| Build passes                              | ✅     | `next build` succeeds. 10 routes compiled (all dynamic). All 3rd-party clients lazy-initialized to avoid build-time env-var failures.                                                          |
+| Typecheck passes                          | ✅     | All 8 packages clean.                                                                                                                                                                          |
+| Tests passing                             | ✅     | 31/31 (Part B tests unchanged).                                                                                                                                                                |
+
+### Audit events implemented
+
+| Event                 | Trigger                         | Notes                                |
+| --------------------- | ------------------------------- | ------------------------------------ |
+| `user.login`          | `/auth/callback`                | tenantId set if single-tenant user   |
+| `user.logout`         | `/auth/logout`                  | tenantId from session at logout time |
+| `invitation.sent`     | `POST /api/invitations`         | metadata: email, role                |
+| `invitation.accepted` | `/invite/[token]` server action | metadata: role, email                |
+| `tenant.switched`     | `/switch-tenant` server action  | metadata: from, to tenant IDs        |
+
+### Interim audit client (flagged per instruction)
+
+`packages/audit/src/index.ts` uses `createServiceRoleClient()` (DIRECT_URL) for every audit write. This is correct for auth-layer events that occur outside `forTenant()` transactions, but it opens a new connection per write which is suboptimal at scale. Part E's full typed client will use a persistent singleton and a proper queue.
+
+### Deviations from spec
+
+- **`@workos-inc/node` only** (not `authkit-nextjs`): Per ADR-0002, WorkOS provides identity only. Using the lower-level SDK gives full control over the session. `authkit-nextjs` would add a second session cookie and interfere with our own iron-session.
+- **Tenant list in session cookie**: The spec says "server-side session with our user_id, active tenant_id, role." We also cache the full tenant list in the session to enable the tenant switcher without a cross-tenant DB query on every page load. The cookie remains HttpOnly/encrypted/server-only — no client exposure.
+- **Resend integrated in Part C**: The spec listed Resend under Part F (background jobs), but the invitation email is a core Part C requirement. Integrated now; Part F will add background job wrapping (retry, queue) if needed.
+
+### Open questions for Part D
+
+1. **`WORKOS_REDIRECT_URI`** must be set in `.env` for local dev and configured in the WorkOS dashboard. Default fallback is `http://localhost:3000/auth/callback`.
+2. **`RESEND_FROM_ADDRESS`** must be a verified domain in Resend. The placeholder `noreply@ria.example.com` will not deliver in production.
+3. **Session revalidation**: The tenant list is cached in the session at login time. If a user's memberships change (invitation accepted in another browser, role change), their session won't reflect it until next login. Part D or E should add a "refresh session" mechanism.
+4. **MFA enrollment prompt**: Deferred within Part C — WorkOS can surface this via AuthKit settings. No app-side changes needed for enforcement; the prompt comes from WorkOS's hosted auth page.
