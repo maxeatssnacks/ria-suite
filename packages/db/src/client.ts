@@ -32,7 +32,7 @@ export function createServiceRoleClient() {
 // All application queries that touch tenant-scoped tables MUST go through
 // $forTenant. It:
 //   1. Wraps the callback in a transaction.
-//   2. Sets SET ROLE app_user — the restricted role with no BYPASSRLS.
+//   2. Sets SET LOCAL ROLE app_user — the restricted role with no BYPASSRLS.
 //   3. Sets transaction-local app.tenant_id and (optionally) app.user_id.
 //
 // The callback receives the same PrismaClient instance so it can issue

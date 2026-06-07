@@ -66,7 +66,7 @@ None. All items in the Part A spec were implemented as written.
 | `get_tenant_id()` / `get_user_id()` helper functions    | ✅     | SECURITY INVOKER; return NULL → deny when context unset                                                                   |
 | `current_user_role()` helper                            | ✅     | SECURITY DEFINER to avoid RLS recursion in write policies                                                                 |
 | RLS ENABLE + FORCE on all tenant-scoped tables          | ✅     | 6 tables: tenant_memberships, tenant_modules, audit_events, invitations, api_keys, (tenants/users via their own policies) |
-| `packages/db/src/client.ts` — `$forTenant` extension    | ✅     | SET ROLE + set_config in transaction; `db.$forTenant(id, cb, opts)`                                                       |
+| `packages/db/src/client.ts` — `$forTenant` extension    | ✅     | SET LOCAL ROLE + set_config in transaction; `db.$forTenant(id, cb, opts)`                                                 |
 | `packages/db/src/seed.ts`                               | ✅     | 2 demo tenants, 6 roles each, 4 modules                                                                                   |
 | `packages/db/tests/isolation.test.ts`                   | ✅     | 17 tests; programmatically generated per tenant-scoped table                                                              |
 | `packages/db/tests/writes.test.ts`                      | ✅     | 7 tests; admin-only write gates, audit_events immutability                                                                |
@@ -106,3 +106,51 @@ Test Files  3 passed (3)
 3. **`app_user` login password** in hosted Postgres: the migration creates `app_user NOLOGIN`.
    To grant login, run: `ALTER ROLE app_user LOGIN PASSWORD '...'`. This should be a one-time
    setup step in a hosting runbook, not in the migration itself.
+
+---
+
+## Part B — Follow-up: Privilege-Parity Fix & Test Hardening
+
+**Status:** Complete  
+**Date:** 2026-06-07
+
+### Discovery
+
+Hosted verification (manual cross-tenant SQL check) revealed that `SET LOCAL ROLE app_user` failed
+on Supabase with `permission denied to set role "app_user"`. Root cause: Supabase's connecting role
+(`postgres`) is **not a superuser** on hosted Postgres — it requires explicit membership in a role to
+switch to it via `SET [LOCAL] ROLE`. Local tests passed without catching this because embedded-postgres
+connects as a true superuser, which can `SET ROLE` to any role without membership.
+
+A manual hotfix (`GRANT app_user TO postgres;`) was applied on hosted. Human-verified cross-tenant
+SQL check result: **6 / 0 / 0** (6 own-tenant rows visible, 0 cross-tenant rows visible, 0 rows
+visible with no context).
+
+### What was completed
+
+| Task                                                   | Status | Notes                                                                                                                                                                                        |
+| ------------------------------------------------------ | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `20260607000001_grant_app_user_to_connector` migration | ✅     | DO block: if `current_user` is not a superuser, `GRANT app_user TO current_user`. Idempotent — safe to re-apply. No-ops on embedded-postgres (true superuser); fires on hosted Supabase.     |
+| Migration deployed to hosted Supabase                  | ✅     | `prisma migrate deploy` — applied cleanly; idempotent over the manual hotfix                                                                                                                 |
+| `app_connect` non-superuser test role                  | ✅     | `setup.ts` creates `NOSUPERUSER LOGIN` role and explicitly grants `app_user` to it, mirroring hosted Postgres privileges                                                                     |
+| `applyMigrations()` in test setup                      | ✅     | Reads all migration dirs sorted — new migrations picked up automatically                                                                                                                     |
+| Connector-path isolation tests                         | ✅     | 3 new tests: `app_connect` connects, `SET LOCAL ROLE app_user`, verifies own-tenant visible / cross-tenant invisible. Fails with clear `permission denied` if the membership grant is absent |
+| SET LOCAL ROLE no-leak tests                           | ✅     | 2 new tests: verify `current_user` is `app_user` mid-transaction, reverts to `app_connect` after COMMIT and ROLLBACK respectively                                                            |
+| Misleading comment fixed in `client.ts`                | ✅     | Line ~35 said "Sets SET ROLE" — corrected to "Sets SET LOCAL ROLE" to match the implementation                                                                                               |
+| `getConnectorConnUrl()` exported from `tests/setup.ts` | ✅     | Returns `app_connect` URL for use in connector-path tests                                                                                                                                    |
+
+### Test results
+
+```
+Test Files  3 passed (3)
+     Tests  31 passed (31)   ← was 26; +5 new tests
+  Duration  ~2.3s
+```
+
+### Deviations from spec
+
+None — this was a follow-up hardening session, not a spec part.
+
+### Open questions for Part C
+
+_(same as above — none added)_

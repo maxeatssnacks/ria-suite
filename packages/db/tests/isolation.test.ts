@@ -10,8 +10,8 @@
  */
 
 import { Client } from 'pg'
-import { getConnUrl, getAppUserConnUrl } from './setup.js'
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { getConnUrl, getAppUserConnUrl, getConnectorConnUrl } from './setup.js'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 // All tenant-scoped tables and their tenant_id column.
 // Extend this list when adding new tables — CI check-rls.ts will also catch omissions.
@@ -259,5 +259,112 @@ describe('users — tenant isolation via membership', () => {
     const res = await client.query(`SELECT id FROM users WHERE id = $1`, [userAId])
     await client.query('ROLLBACK')
     expect(res.rows).toHaveLength(0)
+  })
+})
+
+// ─── Connector-path isolation (non-superuser role + SET LOCAL ROLE) ────────────
+// These tests mirror the production path on hosted Postgres (e.g. Supabase), where
+// the connecting role ("postgres") is NOT a superuser and must rely on the membership
+// grant from migration 20260607000001 to perform SET LOCAL ROLE app_user.
+//
+// If the migration grant is absent, the SET LOCAL ROLE call in the helpers below
+// will throw "permission denied to set role app_user", failing these tests before
+// any RLS assertion runs — giving a clear, actionable signal.
+
+async function connectorClient() {
+  const client = new Client({ connectionString: getConnectorConnUrl() })
+  await client.connect()
+  return client
+}
+
+// Mirrors forTenant() in client.ts: non-superuser connects, then switches to app_user
+// for the duration of the transaction.
+async function withTenantContextViaRole(client: Client, tenantId: string, userId?: string) {
+  await client.query('BEGIN')
+  await client.query('SET LOCAL ROLE app_user')
+  await client.query(`SELECT set_config('app.tenant_id', $1, true)`, [tenantId])
+  if (userId) {
+    await client.query(`SELECT set_config('app.user_id', $1, true)`, [userId])
+  }
+}
+
+describe('connector-path — SET LOCAL ROLE + RLS', () => {
+  let client: Client
+
+  beforeEach(async () => {
+    client = await connectorClient()
+  })
+
+  afterEach(async () => {
+    await client.query('ROLLBACK').catch(() => undefined)
+    await client.end()
+  })
+
+  it('non-superuser connector can SET LOCAL ROLE app_user (grant present)', async () => {
+    await client.query('BEGIN')
+    // Fails with "permission denied" if GRANT app_user TO app_connect is missing.
+    await expect(client.query('SET LOCAL ROLE app_user')).resolves.toBeDefined()
+    await client.query('ROLLBACK')
+  })
+
+  it('sees own-tenant rows after SET LOCAL ROLE', async () => {
+    await withTenantContextViaRole(client, tenantAId, userAId)
+    const res = await client.query(`SELECT id FROM tenant_memberships WHERE tenant_id = $1`, [
+      tenantAId,
+    ])
+    await client.query('ROLLBACK')
+    expect(res.rows.length).toBeGreaterThan(0)
+  })
+
+  it('cannot see other-tenant rows after SET LOCAL ROLE', async () => {
+    await withTenantContextViaRole(client, tenantBId, userBId)
+    const res = await client.query(`SELECT id FROM tenant_memberships WHERE tenant_id = $1`, [
+      tenantAId,
+    ])
+    await client.query('ROLLBACK')
+    expect(res.rows).toHaveLength(0)
+  })
+})
+
+// ─── SET LOCAL ROLE — no-leak-after-transaction ────────────────────────────────
+// Verifies that SET LOCAL (not SET) is used, so the role reverts when the
+// transaction ends. If SET ROLE (without LOCAL) were used instead, a committed
+// or rolled-back transaction would leave the connection permanently running as
+// app_user — a privilege escalation risk for pooled connections.
+
+describe('SET LOCAL ROLE — no leak after transaction', () => {
+  it('role reverts to connector role after COMMIT', async () => {
+    const client = new Client({ connectionString: getConnectorConnUrl() })
+    await client.connect()
+    try {
+      await client.query('BEGIN')
+      await client.query('SET LOCAL ROLE app_user')
+
+      const during = await client.query('SELECT current_user AS u')
+      expect(during.rows[0].u).toBe('app_user')
+
+      await client.query('COMMIT')
+
+      // After commit the role must revert — SET LOCAL scopes to the transaction.
+      const after = await client.query('SELECT current_user AS u')
+      expect(after.rows[0].u).toBe('app_connect')
+    } finally {
+      await client.end()
+    }
+  })
+
+  it('role reverts to connector role after ROLLBACK', async () => {
+    const client = new Client({ connectionString: getConnectorConnUrl() })
+    await client.connect()
+    try {
+      await client.query('BEGIN')
+      await client.query('SET LOCAL ROLE app_user')
+      await client.query('ROLLBACK')
+
+      const after = await client.query('SELECT current_user AS u')
+      expect(after.rows[0].u).toBe('app_connect')
+    } finally {
+      await client.end()
+    }
   })
 })
