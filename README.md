@@ -67,6 +67,54 @@ tooling/
   tsconfig/         Shared TypeScript configs (@ria/tsconfig)
 ```
 
+## Database (Part B)
+
+### Local development
+
+Tests spin up an embedded PostgreSQL 18.4 instance automatically — no Docker or external DB needed.
+
+```bash
+pnpm test                # starts embedded PG, runs migration SQL, runs 26 tests, stops PG
+```
+
+### Hosted deployment (Supabase or any PostgreSQL)
+
+Set two connection strings in your `.env` (see `.env.example` for descriptions):
+
+| Variable       | What it points to                                                                   |
+| -------------- | ----------------------------------------------------------------------------------- |
+| `DATABASE_URL` | Pooled connection (pgBouncer / Supabase transaction pooler, port 6543)              |
+| `DIRECT_URL`   | Direct / session-mode connection (bypasses pooler, port 5432) — used for migrations |
+
+Then from the repo root:
+
+```bash
+# 1. Apply all pending migrations to the hosted DB
+pnpm --filter @ria/db db:deploy
+
+# 2. Seed demo data (2 tenants × 6 roles, 4 modules) — dev/staging only
+pnpm --filter @ria/db db:seed
+
+# 3. (Optional) Verify RLS is enabled on every tenant-scoped table
+pnpm --filter @ria/db db:check-rls
+```
+
+> **Re-running migrations**: `prisma migrate deploy` is idempotent — already-applied migrations are skipped. Safe to run on every deploy.
+
+> **`app_user` login**: the migration creates `app_user` with `NOLOGIN`. For hosted Postgres, grant login once as a superuser:
+>
+> ```sql
+> ALTER ROLE app_user LOGIN PASSWORD '<strong-password>';
+> ```
+>
+> Then update `DATABASE_URL` to connect as `app_user` instead of `postgres` for runtime queries. During Part B the seed still uses the `postgres` superuser via `DIRECT_URL`.
+
+### Regenerate Prisma client after schema changes
+
+```bash
+pnpm --filter @ria/db db:generate
+```
+
 ## Architecture & Conventions
 
 See [CLAUDE.md](./CLAUDE.md) for the full project constitution: locked stack, non-negotiable

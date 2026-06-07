@@ -11,8 +11,9 @@
     "lint": "eslint src",
     "test": "vitest run",
     "db:generate": "prisma generate",
-    "db:seed": "tsx src/seed.ts",
-    "db:check-rls": "tsx scripts/check-rls.ts"
+    "db:deploy": "dotenv -e ../../.env -- prisma migrate deploy",
+    "db:seed": "dotenv -e ../../.env -- tsx src/seed.ts",
+    "db:check-rls": "dotenv -e ../../.env -- tsx scripts/check-rls.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0"
@@ -21,6 +22,7 @@
     "@ria/eslint-config": "workspace:*",
     "@ria/tsconfig": "workspace:*",
     "@types/pg": "^8.11.11",
+    "dotenv-cli": "^11.0.0",
     "embedded-postgres": "18.4.0-beta.17",
     "eslint": "^9.25.0",
     "pg": "^8.13.3",
