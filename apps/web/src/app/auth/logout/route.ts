@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server'
 import { getIronSession, type SessionOptions } from 'iron-session'
 import { writeAuditEvent } from '@ria/audit'
+import { getWorkos } from '@/lib/workos'
 import type { SessionData } from '@ria/core'
 
 function getSessionOptions(): SessionOptions {
@@ -17,13 +18,33 @@ function getSessionOptions(): SessionOptions {
 }
 
 export async function GET(request: NextRequest) {
-  const response = NextResponse.redirect(new URL('/auth/login', request.url))
-  const session = await getIronSession<SessionData>(request, response, getSessionOptions())
+  const appBaseUrl = process.env.NEXT_PUBLIC_APP_URL ?? new URL(request.url).origin
+  const signedOutUrl = `${appBaseUrl}/auth/signed-out`
 
-  // Capture identity before destroying for audit log.
-  const { userId, tenantId, role } = session
+  // Use a temporary Response for iron-session to write the cookie-clearing
+  // Set-Cookie header onto. We determine the redirect target first, then
+  // transfer the header to the final redirect response.
+  const cookieSink = new Response()
+  const session = await getIronSession<SessionData>(request, cookieSink, getSessionOptions())
 
+  const { userId, tenantId, role, workosSessionId } = session
   session.destroy()
+
+  // Redirect through WorkOS's logout endpoint to terminate the IdP session.
+  // Without this, WorkOS silently re-authenticates on next login attempt.
+  const redirectTarget = workosSessionId
+    ? getWorkos().userManagement.getLogoutUrl({
+        sessionId: workosSessionId,
+        returnTo: signedOutUrl,
+      })
+    : signedOutUrl
+
+  const response = NextResponse.redirect(redirectTarget)
+
+  // Transfer the session-clearing Set-Cookie header to the final response.
+  for (const cookie of cookieSink.headers.getSetCookie()) {
+    response.headers.append('Set-Cookie', cookie)
+  }
 
   if (userId) {
     void writeAuditEvent({

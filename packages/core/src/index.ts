@@ -81,9 +81,12 @@ export type TenantSummary = z.infer<typeof TenantSummarySchema>
 // The session stored in the encrypted HttpOnly cookie.
 // tenantId/role are undefined when the user has no active tenant context
 // (new user awaiting invitation, or multi-tenant user who hasn't selected one yet).
+// workosSessionId is the `sid` claim from the WorkOS access token JWT, used to
+// terminate the WorkOS IdP session on logout via getLogoutUrl().
 export const SessionDataSchema = z.object({
   userId: z.string().uuid(),
   workosUserId: z.string(),
+  workosSessionId: z.string().optional(),
   email: z.string().email(),
   name: z.string(),
   tenantId: z.string().uuid().optional(),

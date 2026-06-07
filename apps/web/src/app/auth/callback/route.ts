@@ -5,6 +5,22 @@ import { writeAuditEvent } from '@ria/audit'
 import type { TenantSummary, SessionData } from '@ria/core'
 import { getWorkos, WORKOS_CLIENT_ID } from '@/lib/workos'
 
+// Decode the `sid` claim from a WorkOS access token JWT without verifying the
+// signature — we trust it because we just received it from WorkOS directly.
+function extractSid(accessToken: string): string | undefined {
+  try {
+    const payload = accessToken.split('.')[1]
+    if (!payload) return undefined
+    const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString()) as Record<
+      string,
+      unknown
+    >
+    return typeof decoded.sid === 'string' ? decoded.sid : undefined
+  } catch {
+    return undefined
+  }
+}
+
 function getSessionOptions(): SessionOptions {
   return {
     password: process.env.SESSION_SECRET ?? '',
@@ -29,10 +45,16 @@ export async function GET(request: NextRequest) {
 
   try {
     // Exchange WorkOS authorization code for user identity.
-    const { user: workosUser } = await getWorkos().userManagement.authenticateWithCode({
-      clientId: WORKOS_CLIENT_ID(),
-      code,
-    })
+    const { user: workosUser, accessToken } = await getWorkos().userManagement.authenticateWithCode(
+      {
+        clientId: WORKOS_CLIENT_ID(),
+        code,
+      }
+    )
+
+    // Extract WorkOS session ID from the `sid` JWT claim. Stored in our session
+    // so logout can call getLogoutUrl() to terminate the IdP session.
+    const workosSessionId = extractSid(accessToken)
 
     const srClient = createServiceRoleClient()
     let dbUser: { id: string; name: string }
@@ -86,6 +108,7 @@ export async function GET(request: NextRequest) {
     const session = await getIronSession<SessionData>(request, response, getSessionOptions())
     session.userId = dbUser.id
     session.workosUserId = workosUser.id
+    session.workosSessionId = workosSessionId
     session.email = workosUser.email
     session.name = dbUser.name
     session.tenants = tenants

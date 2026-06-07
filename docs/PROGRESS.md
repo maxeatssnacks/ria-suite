@@ -207,6 +207,7 @@ _(same as above — none added)_
 - **Tenant list in session cookie**: The spec says "server-side session with our user_id, active tenant_id, role." We also cache the full tenant list in the session to enable the tenant switcher without a cross-tenant DB query on every page load. The cookie remains HttpOnly/encrypted/server-only — no client exposure.
 - **Resend integrated in Part C**: The spec listed Resend under Part F (background jobs), but the invitation email is a core Part C requirement. Integrated now; Part F will add background job wrapping (retry, queue) if needed.
 - **Dev fallback for invitation email**: When `RESEND_API_KEY` is not set, the invitation route skips the Resend call and logs the full accept URL to the server console (prefixed `[invitations] DEV`). This allows the full invite→accept flow to be tested locally without a Resend account. Resend wired for real in Part F.
+- **Logout bug fixed (human verification finding)**: Original logout redirected to `/auth/login` which auto-forwarded to WorkOS; WorkOS's live IdP session silently re-authenticated, recreating the app session. Fix: (1) store WorkOS session ID (`sid` JWT claim from access token) in iron-session at callback time; (2) on logout, call `getLogoutUrl({ sessionId })` to redirect through WorkOS's logout endpoint, terminating the IdP session; (3) land on a new public `/auth/signed-out` page with a sign-in button instead of auto-redirecting into the login flow. `workosSessionId` added to `SessionDataSchema` in `@ria/core`.
 
 ### Verification checklist (human)
 
@@ -217,7 +218,7 @@ _(same as above — none added)_
 - [ ] `tenant_admin` sends invitation via `POST /api/invitations` → accept URL logged to console (dev) or email delivered (prod)
 - [ ] Invitee opens accept link → membership created, session updated, redirected to `/dashboard`
 - [ ] Tenant A session cannot access Tenant B resources (middleware + RLS)
-- [ ] Session expiry / logout → session cookie cleared, redirect to `/auth/login`
+- [ ] Logout → iron-session cookie cleared, WorkOS IdP session terminated (no silent re-auth), lands on `/auth/signed-out` with sign-in button (not auto-redirected back into login flow)
 - [ ] Audit events present in `audit_events` table for: `user.login`, `user.logout`, `invitation.sent`, `invitation.accepted`, `tenant.switched`
 
 ### Open questions for Part D
