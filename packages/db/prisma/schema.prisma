@@ -1,0 +1,205 @@
+// Migration SQL is written manually alongside Prisma's DDL.
+// All DateTime columns are stored as TIMESTAMPTZ in the DB (see migration.sql).
+// All timestamps must be UTC — never store local time.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum TenantStatus {
+  active
+  suspended
+  trial
+}
+
+enum IsolationTier {
+  logical
+  dedicated_db
+  dedicated_deploy
+}
+
+enum UserStatus {
+  active
+  invited
+  disabled
+}
+
+enum TenantRole {
+  platform_admin
+  tenant_admin
+  compliance
+  supervisor
+  ops
+  advisor
+  read_only
+}
+
+enum MembershipStatus {
+  active
+  invited
+  disabled
+}
+
+enum ModuleStatus {
+  alpha
+  beta
+  ga
+  deprecated
+}
+
+enum TenantModuleStatus {
+  active
+  trial
+  suspended
+}
+
+// ─── Core entities ──────────────────────────────────────────────────────────
+
+model Tenant {
+  id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name          String
+  slug          String        @unique
+  status        TenantStatus  @default(active)
+  isolationTier IsolationTier @default(logical) @map("isolation_tier")
+  settings      Json          @default("{}")
+  timezone      String        @default("America/New_York")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+  deletedAt     DateTime?     @map("deleted_at")
+
+  memberships   TenantMembership[]
+  tenantModules TenantModule[]
+  auditEvents   AuditEvent[]
+  invitations   Invitation[]
+  apiKeys       ApiKey[]
+
+  @@map("tenants")
+}
+
+model User {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workosUserId String     @unique @map("workos_user_id")
+  email        String
+  name         String
+  status       UserStatus @default(active)
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+  deletedAt    DateTime?  @map("deleted_at")
+
+  memberships        TenantMembership[]
+  createdInvitations Invitation[]       @relation("InvitationCreatedBy")
+  createdApiKeys     ApiKey[]           @relation("ApiKeyCreatedBy")
+
+  @@map("users")
+}
+
+model TenantMembership {
+  id       String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId String           @map("tenant_id") @db.Uuid
+  userId   String           @map("user_id") @db.Uuid
+  role     TenantRole
+  status   MembershipStatus @default(active)
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@unique([tenantId, userId])
+  @@map("tenant_memberships")
+}
+
+// ─── Module catalog ──────────────────────────────────────────────────────────
+
+model Module {
+  id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key         String       @unique
+  name        String
+  description String       @default("")
+  status      ModuleStatus @default(alpha)
+
+  tenantModules TenantModule[]
+
+  @@map("modules")
+}
+
+model TenantModule {
+  id          String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId    String             @map("tenant_id") @db.Uuid
+  moduleId    String             @map("module_id") @db.Uuid
+  status      TenantModuleStatus @default(trial)
+  activatedAt DateTime?          @map("activated_at")
+  config      Json               @default("{}")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  module Module @relation(fields: [moduleId], references: [id])
+
+  @@unique([tenantId, moduleId])
+  @@map("tenant_modules")
+}
+
+// ─── Audit, invitations, API keys ────────────────────────────────────────────
+
+// Minimal schema — full design in Part E
+model AuditEvent {
+  id         String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId   String?     @map("tenant_id") @db.Uuid
+  actorId    String?     @map("actor_id") @db.Uuid
+  actorRole  TenantRole? @map("actor_role")
+  action     String
+  resource   String
+  resourceId String?     @map("resource_id")
+  metadata   Json        @default("{}")
+  ipAddress  String?     @map("ip_address")
+  userAgent  String?     @map("user_agent")
+  reason     String?
+  createdAt  DateTime    @default(now()) @map("created_at")
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId])
+  @@index([createdAt])
+  @@map("audit_events")
+}
+
+model Invitation {
+  id         String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId   String     @map("tenant_id") @db.Uuid
+  email      String
+  role       TenantRole
+  tokenHash  String     @unique @map("token_hash")
+  expiresAt  DateTime   @map("expires_at")
+  acceptedAt DateTime?  @map("accepted_at")
+  createdBy  String     @map("created_by") @db.Uuid
+  createdAt  DateTime   @default(now()) @map("created_at")
+
+  tenant  Tenant @relation(fields: [tenantId], references: [id])
+  creator User   @relation("InvitationCreatedBy", fields: [createdBy], references: [id])
+
+  @@index([tenantId])
+  @@map("invitations")
+}
+
+// Placeholder for Part F / post-shell
+model ApiKey {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId   String    @map("tenant_id") @db.Uuid
+  name       String
+  keyHash    String    @unique @map("key_hash")
+  lastUsedAt DateTime? @map("last_used_at")
+  createdBy  String    @map("created_by") @db.Uuid
+  revokedAt  DateTime? @map("revoked_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  tenant  Tenant @relation(fields: [tenantId], references: [id])
+  creator User   @relation("ApiKeyCreatedBy", fields: [createdBy], references: [id])
+
+  @@index([tenantId])
+  @@map("api_keys")
+}

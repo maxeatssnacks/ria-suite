@@ -9,12 +9,24 @@
     "build": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
-    "test": "echo 'No tests yet' && exit 0"
+    "test": "vitest run",
+    "db:generate": "prisma generate",
+    "db:seed": "tsx src/seed.ts",
+    "db:check-rls": "tsx scripts/check-rls.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.22.0"
   },
   "devDependencies": {
     "@ria/eslint-config": "workspace:*",
     "@ria/tsconfig": "workspace:*",
+    "@types/pg": "^8.11.11",
+    "embedded-postgres": "18.4.0-beta.17",
     "eslint": "^9.25.0",
-    "typescript": "^5.8.3"
+    "pg": "^8.13.3",
+    "prisma": "^5.22.0",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.3"
   }
 }

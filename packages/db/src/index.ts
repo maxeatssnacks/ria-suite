@@ -1,2 +1,2 @@
-// Prisma client, RLS-aware patterns, migrations — implemented in Part B
-export {}
+export { db, prisma, forTenant, createServiceRoleClient } from './client.js'
+export type { ForTenantOptions, ForTenantCallback } from './client.js'
