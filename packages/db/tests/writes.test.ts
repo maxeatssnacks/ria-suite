@@ -159,6 +159,77 @@ describe('audit_events — immutability for app_user', () => {
   })
 })
 
+// ─── platform_admin authority ────────────────────────────────────────────────
+//
+// Verifies that platform_admin (a role stored in tenant_memberships, not a
+// separate DB role) satisfies the RLS write policies that previously only
+// accepted tenant_admin. Also verifies ops (a lower role) is still blocked.
+
+describe('platform_admin — write authority matches can() hierarchy', () => {
+  let client: Client
+  let platformAdminUserId: string
+  let opsUserId: string
+
+  beforeAll(async () => {
+    // platform_admin user — has a platform_admin membership in the test tenant
+    const uPa = await superClient.query(
+      `INSERT INTO users (workos_user_id, email, name)
+       VALUES ('wos-write-pa', 'pa@write.test', 'Platform Admin')
+       RETURNING id`
+    )
+    platformAdminUserId = uPa.rows[0].id as string
+    await superClient.query(
+      `INSERT INTO tenant_memberships (tenant_id, user_id, role)
+       VALUES ($1, $2, 'platform_admin')`,
+      [tenantId, platformAdminUserId]
+    )
+
+    // ops user — has an ops membership in the test tenant
+    const uOps = await superClient.query(
+      `INSERT INTO users (workos_user_id, email, name)
+       VALUES ('wos-write-ops', 'ops@write.test', 'Ops User')
+       RETURNING id`
+    )
+    opsUserId = uOps.rows[0].id as string
+    await superClient.query(
+      `INSERT INTO tenant_memberships (tenant_id, user_id, role)
+       VALUES ($1, $2, 'ops')`,
+      [tenantId, opsUserId]
+    )
+  })
+
+  beforeEach(async () => {
+    client = await appClient()
+  })
+  afterEach(async () => {
+    await client.query('ROLLBACK').catch(() => undefined)
+    await client.end()
+  })
+
+  it('platform_admin can update a tenant membership', async () => {
+    await withContext(client, platformAdminUserId)
+    await expect(
+      client.query(
+        `UPDATE tenant_memberships SET role = 'read_only'
+         WHERE tenant_id = $1 AND user_id = $2`,
+        [tenantId, advisorUserId]
+      )
+    ).resolves.toBeDefined()
+    // roll back the role change — afterEach ROLLBACK handles the transaction
+  })
+
+  it('ops user cannot update a tenant membership', async () => {
+    await withContext(client, opsUserId)
+    await expect(
+      client.query(
+        `UPDATE tenant_memberships SET role = 'read_only'
+         WHERE tenant_id = $1 AND user_id = $2`,
+        [tenantId, advisorUserId]
+      )
+    ).rejects.toThrow()
+  })
+})
+
 // ─── invitations — admin only ─────────────────────────────────────────────────
 
 describe('invitations — admin-only write', () => {

@@ -1,6 +1,6 @@
 'use client'
 
-import { useActionState } from 'react'
+import { useActionState, useState } from 'react'
 import { TENANT_ROLES } from '@ria/core'
 import { changeRole, disableMember, reenableMember, type MemberActionState } from './actions'
 
@@ -29,6 +29,7 @@ export function MemberRoleForm({
   isCurrentUser: boolean
 }) {
   const [state, action, pending] = useActionState<MemberActionState, FormData>(changeRole, INITIAL)
+  const [selectedRole, setSelectedRole] = useState(currentRole)
 
   if (isCurrentUser) {
     return (
@@ -43,7 +44,8 @@ export function MemberRoleForm({
       <input type="hidden" name="userId" value={userId} />
       <select
         name="role"
-        defaultValue={currentRole}
+        value={selectedRole}
+        onChange={(e) => setSelectedRole(e.target.value)}
         className="border-input bg-background rounded-md border px-2 py-1 text-xs"
         disabled={pending}
       >
@@ -55,7 +57,7 @@ export function MemberRoleForm({
       </select>
       <button
         type="submit"
-        disabled={pending}
+        disabled={pending || selectedRole === currentRole}
         className="rounded-md border px-2 py-1 text-xs hover:bg-accent disabled:opacity-60"
       >
         {pending ? '…' : 'Save'}

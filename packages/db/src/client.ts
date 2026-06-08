@@ -66,7 +66,12 @@ export async function forTenant<T>(
   callback: ForTenantCallback<T>,
   options: ForTenantOptions = {}
 ): Promise<T> {
-  return prisma.$transaction(async (tx) => {
+  // `return await` (not bare `return`) ensures the rejection is owned by this
+  // async function before propagating to the caller. This prevents Node.js from
+  // briefly flagging the $transaction Promise as "unhandled" during the
+  // microtask gap between the Promise being created and the caller's await
+  // attaching a rejection handler.
+  return await prisma.$transaction(async (tx) => {
     const client = tx as unknown as PrismaClient
 
     await tx.$executeRawUnsafe(`SET LOCAL ROLE app_user`)

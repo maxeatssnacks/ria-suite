@@ -371,6 +371,44 @@ than `docs/adr`.
 - [ ] **Platform admin impersonation**: confirm no impersonation UI exists; ADR-0005 present at `docs/adr/0005-no-impersonation-v1.md`
 - [ ] **Reason enforcement**: every platform admin form requires reason ≥ 10 chars; HTML minLength enforced; server-side Zod validation also enforces it
 
+### Bugs fixed (human verification — post Part D)
+
+#### Bug 1: platform_admin blocked by RLS write policies (42501)
+
+**Root cause**: All tenant-scoped write policies used `current_user_role() = 'tenant_admin'`.
+The `current_user_role()` SQL function returns the role from `tenant_memberships` for the acting
+user in the current tenant context. A platform_admin has `tenant_memberships.role = 'platform_admin'`,
+which does not equal `'tenant_admin'` → WITH CHECK rejected every write.
+
+**Fix**: Migration `20260607000002_platform_admin_rls` — rewrites all write policies on
+`tenant_memberships`, `tenant_modules`, `invitations`, and `api_keys` to use
+`current_user_role() IN ('tenant_admin', 'platform_admin')`. The `current_user_role()` function
+itself needed no change. Migration applied to hosted Postgres. Test added:
+`writes.test.ts` — "platform_admin can update a membership", "ops user cannot update a membership".
+
+#### Bug 2: ELIFECYCLE crash from unhandled rejection after failed forTenant
+
+**Root cause**: When Prisma's interactive transaction fails (RLS 42501), Prisma sends an internal
+ROLLBACK asynchronously. If the ROLLBACK itself fails (bad connection state after the error),
+Prisma leaks a rejected Promise that is not attached to any `.catch()` handler — it falls outside
+our try/catch. Node.js 22 (pinned in this project) terminates the process on unhandled rejections.
+Our application code returns an error state correctly; the crash is Prisma-internal.
+
+**Fixes**:
+
+- `packages/db/src/client.ts` — changed `return prisma.$transaction(...)` to
+  `return await prisma.$transaction(...)` in `forTenant`. The `return await` pattern ensures
+  the rejection is owned by the `forTenant` async function before propagating, preventing Node.js
+  from briefly seeing the `$transaction` Promise as unhandled during the microtask adoption gap.
+- `apps/web/src/instrumentation.ts` — new file; registers `process.on('unhandledRejection', ...)`
+  at server startup to log-and-continue for any Prisma-internal rejections that escape the above fix.
+  Next.js's `instrumentation.ts` is the canonical place for process-level setup.
+
+#### Bug 3: Save button active when role unchanged (UX)
+
+`MemberRoleForm` changed from uncontrolled (`defaultValue`) to controlled (`value` + `onChange`
+via `useState`). Save button now has `disabled={pending || selectedRole === currentRole}`.
+
 ### Open questions for Part E
 
 1. **`tenants` UPDATE policy migration**: Add `GRANT UPDATE ON tenants TO app_user` + `CREATE POLICY "tenants_update"` so settings writes can use `forTenant` (RLS-enforced) rather than service role. Currently deferred.
