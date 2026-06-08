@@ -302,8 +302,8 @@ than `docs/adr`.
 
 | Task                                                             | Status | Notes                                                                                                                                                                                                                                                                                                                                                         |
 | ---------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Session refresh** — carried forward from Part C                | ✅     | `lib/refresh-session.ts` re-fetches memberships on every page nav through `(app)/layout.tsx`; session saved only when something changed. See note below.                                                                                                                                                                                                      |
-| `(app)/layout.tsx` — persistent nav bar                          | ✅     | Shows tenant name, Admin link (tenant_admin/audit-readers), Platform link (platform_admin), Switch tenant, Sign out. Calls `refreshSessionMemberships` on every navigation.                                                                                                                                                                                   |
+| **Session refresh** — carried forward from Part C                | ✅     | `lib/refresh-session.ts` + `session-refresh-action.ts` + `<SessionRefresher>` client component. Re-fetches memberships on every navigation via Server Action; session saved only when something changed. See note below (revised after bug fix).                                                                                                              |
+| `(app)/layout.tsx` — persistent nav bar                          | ✅     | Shows tenant name, Admin link (tenant_admin/audit-readers), Platform link (platform_admin), Switch tenant, Sign out. Session refresh via `<SessionRefresher>` client component (not render-time).                                                                                                                                                             |
 | Dashboard — remove Part C placeholder                            | ✅     | Shows role-appropriate quick-links to admin sections.                                                                                                                                                                                                                                                                                                         |
 | `(app)/admin/layout.tsx` — tenant_admin/audit gate + sidebar nav | ✅     | Gates on `membership.change_role` OR `audit.read`. Nav items filtered by role.                                                                                                                                                                                                                                                                                |
 | **Users & Roles** — `(app)/admin/users/`                         | ✅     | Server-rendered member list with active/disabled sections. `MemberRoleForm` (select + save) and `MemberDisableForm` (disable/re-enable) as `useActionState` client components. Self-modification blocked.                                                                                                                                                     |
@@ -325,15 +325,22 @@ than `docs/adr`.
 | `SERVICE_ROLE_USAGE.md` — entries #7–#12                         | ✅     | Session refresh, settings read/write, module catalog, audit actor lookup, platform admin.                                                                                                                                                                                                                                                                     |
 | Typecheck, lint, build                                           | ✅     | All 8 packages typecheck clean. Lint clean. Build: 20 routes (all dynamic).                                                                                                                                                                                                                                                                                   |
 
-### Session refresh — chosen approach (carried forward from Part C)
+### Session refresh — chosen approach (revised after human verification)
 
-`lib/refresh-session.ts` re-fetches all active memberships for the current user from the DB (service role, since it's a cross-tenant query) on every page navigation through `(app)/layout.tsx`. Session is saved only if something changed (avoids resetting the 7-day TTL on every hit).
+**Bug fixed (human verification):** The original Part D implementation called `session.save()` inside `(app)/layout.tsx`, a server component rendered during the page request. Next.js throws "Cookies can only be modified in a Server Action or Route Handler" in this context — cookie writes during render are forbidden.
+
+**Option considered and rejected — middleware:** Middleware runs in the Edge runtime by default; Prisma requires Node.js (native query engine binary). `experimental.nodeMiddleware` exists in Next.js 15 but is unstable and outside our locked stack choices. Rejected.
+
+**Chosen approach — Server Action + `<SessionRefresher>` client component:**
+
+`lib/refresh-session.ts` still contains the Prisma query + comparison logic (unchanged). A new `'use server'` action (`session-refresh-action.ts`) wraps it. A lightweight `<SessionRefresher>` client component in `(app)/layout.tsx` calls the action via `useEffect` with `usePathname` as a dependency, so it re-fires on every client-side navigation — matching the original per-navigation frequency.
 
 **Tradeoffs:**
 
-- Pro: changes (role updates, new invitations accepted, disabled memberships) are visible on next page load, not next login. No complex invalidation signal needed.
-- Con: one extra service-role DB round-trip per page navigation. Acceptable for a B2B app where tenants have small user counts and correctness matters.
-- Known gap: if a user is disabled and their browser is in the middle of a server action (not a navigation), the disable takes effect only after the action completes and they navigate to a new page.
+- The layout renders with the current (possibly stale) cookie; the server action fires after mount. The next navigation sees the updated session.
+- Role changes and disables are reflected within one page-view, not one full login cycle. Acceptable for a B2B app where such changes are infrequent explicit admin operations.
+- No Edge runtime dependency; no experimental flags; Server Action context is stable for cookie writes.
+- The layout never calls `session.save()`.
 
 **NOT implemented** (deferred to Part E): a `sessionVersion` column on `tenant_memberships` that middleware checks cheaply — this would be more efficient but adds DB schema complexity.
 

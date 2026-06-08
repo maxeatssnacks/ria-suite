@@ -2,16 +2,20 @@ import type { IronSession } from 'iron-session'
 import { createServiceRoleClient } from '@ria/db'
 import type { SessionData, TenantSummary } from '@ria/core'
 
-// Re-fetches the user's active memberships from the DB on every page navigation
-// through (app)/layout.tsx. This is the chosen mechanism for keeping the session
-// fresh after role changes, new invitations accepted, or membership status changes.
+// Re-fetches the user's active memberships from the DB and updates the session
+// cookie if anything changed. Keeps the session in sync with DB state (role
+// changes, disables, new invitations) without requiring re-login.
+//
+// MUST be called from a Server Action or Route Handler — NOT from a server
+// component render. Next.js forbids cookie writes during render; session.save()
+// will throw "Cookies can only be modified in a Server Action or Route Handler."
+// The caller is (app)/session-refresh-action.ts, triggered by <SessionRefresher>.
 //
 // Cost: one service-role query per page navigation — acceptable for a B2B app
-// where user counts per tenant are small and correctness matters more than
-// eliminating a single round-trip. See PROGRESS.md Part D session-refresh note.
+// where user counts per tenant are small. See PROGRESS.md Part D note.
 //
-// SERVICE ROLE: reading memberships cross-tenant (we need all tenants for this
-// user, not just the current one). See SERVICE_ROLE_USAGE.md entry #7.
+// SERVICE ROLE: cross-tenant membership query (all tenants for this user).
+// See SERVICE_ROLE_USAGE.md entry #7.
 export async function refreshSessionMemberships(session: IronSession<SessionData>): Promise<void> {
   if (!session.userId) return
 

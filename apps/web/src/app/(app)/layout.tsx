@@ -1,8 +1,8 @@
 import { redirect } from 'next/navigation'
 import type { ReactNode } from 'react'
 import { getSession } from '@/lib/session'
-import { refreshSessionMemberships } from '@/lib/refresh-session'
 import { can } from '@ria/core'
+import { SessionRefresher } from './session-refresher'
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
   const session = await getSession()
@@ -11,9 +11,9 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
     redirect('/auth/login')
   }
 
-  // Keep the session's tenant list in sync with the DB.
-  // Catches role changes, new memberships, and disables without requiring re-login.
-  await refreshSessionMemberships(session)
+  // Session refresh happens via <SessionRefresher> (client component below).
+  // Cookie writes are forbidden during server component render; the refresher
+  // fires a Server Action on every navigation instead.
 
   const currentTenant = session.tenants?.find((t) => t.id === session.tenantId)
   const isAdmin = can({ role: session.role }, 'membership.change_role')
@@ -57,6 +57,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
           </a>
         </div>
       </header>
+      <SessionRefresher />
       {children}
     </div>
   )
