@@ -73,6 +73,72 @@ Each entry must include:
 - **Audit**: YES — `writeAuditEvent({ action: 'invitation.accepted', ... })` is called.
 - **Added**: 2026-06-07
 
+### 7 — `apps/web/src/lib/refresh-session.ts` — per-page session membership refresh
+
+- **Path**: `apps/web/src/lib/refresh-session.ts` → `refreshSessionMemberships()`
+- **Reason**: Reading all of a user's active memberships across tenants is a
+  cross-tenant query — it requires seeing memberships for every tenant the user
+  belongs to, not just the currently active one. The `tenant_memberships` RLS
+  SELECT policy is scoped to `get_tenant_id()`, so `forTenant()` only reveals
+  one tenant at a time. Service role is the only way to do this cross-tenant
+  membership list in one query. Called from `(app)/layout.tsx` on every page
+  navigation to keep the session fresh after role changes or new invitations.
+- **Audit**: N/A — read-only; no mutation.
+- **Added**: 2026-06-07
+
+### 8 — `apps/web/src/app/(app)/admin/settings/actions.ts` — tenant settings update
+
+- **Path**: `apps/web/src/app/(app)/admin/settings/actions.ts` → `updateSettings()`
+- **Reason**: The `tenants` table only grants `SELECT` to `app_user`; there is no
+  UPDATE policy. Tenant settings mutations (name, timezone, notification prefs)
+  require service role. Role is checked at the application layer: `can({ role },
+'tenant.update_settings')` requires `tenant_admin`.
+- **Audit**: YES — `writeAuditEvent({ action: 'tenant.update_settings', ... })`.
+- **Added**: 2026-06-07
+
+### 9 — `apps/web/src/app/(app)/admin/settings/page.tsx` — tenant settings read
+
+- **Path**: `apps/web/src/app/(app)/admin/settings/page.tsx`
+- **Reason**: Reads the tenant row (including the `settings` JSON) to populate the
+  settings form. The `tenants` SELECT policy works via `forTenant`, but we also
+  need to bypass RLS to read settings outside a forTenant context. Simpler to use
+  service role consistently with the write path. Read-only; no mutations here.
+- **Audit**: N/A — read-only page render.
+- **Added**: 2026-06-07
+
+### 10 — `apps/web/src/app/(app)/admin/modules/page.tsx` — module catalog read
+
+- **Path**: `apps/web/src/app/(app)/admin/modules/page.tsx`
+- **Reason**: The module catalog (`modules` table) is a global table with no tenant
+  scoping. While `app_user` has SELECT on it, reading it requires setting a tenant
+  context in `forTenant`. Using service role for the global catalog read avoids
+  coupling the catalog lookup to the tenant context unnecessarily.
+- **Audit**: N/A — read-only page render.
+- **Added**: 2026-06-07
+
+### 11 — `apps/web/src/app/(app)/admin/audit/page.tsx` — actor name lookup
+
+- **Path**: `apps/web/src/app/(app)/admin/audit/page.tsx` and
+  `apps/web/src/app/api/audit/export/route.ts`
+- **Reason**: After fetching audit events (via `forTenant`), actor names and emails
+  are resolved from the `users` table. The `users_select` RLS policy only exposes
+  users who currently have an active membership in the tenant — it would miss actors
+  who have since been removed. Service role ensures the audit log always shows who
+  performed an action even if that person is no longer a member.
+- **Audit**: N/A — read-only.
+- **Added**: 2026-06-07
+
+### 12 — `apps/web/src/app/(platform-admin)/platform/...` — all platform-admin operations
+
+- **Path**: All files under `apps/web/src/app/(platform-admin)/platform/`
+- **Reason**: Platform admin operations (create tenant, suspend tenant, activate
+  module) are cross-tenant by definition. There is no single tenant context to
+  establish; service role is the only correct tool. Every operation is gated by
+  `can({ role }, 'platform.*')` (requires `platform_admin` role) and writes a
+  mandatory audit event with a required `reason` field.
+- **Audit**: YES — every mutation writes `writeAuditEvent(...)` with `reason`.
+- **Added**: 2026-06-07
+
 ## Guidelines
 
 - Service-role clients MUST only be instantiated in server-side code
